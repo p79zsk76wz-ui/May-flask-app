@@ -1,0 +1,124 @@
+from flask import Flask, request, jsonify
+import copy
+
+app = Flask(__name__)
+
+# --- یاساکانی دامەی تورکی و ئەلگۆریتمی زیرەکی دەستکرد ---
+
+def get_all_valid_moves(board, player):
+    """ دۆزینەوەی هەموو جوڵە یاساییەکان. خواردنی بەرد ناچارییە! """
+    capture_moves = []
+    regular_moves = []
+    
+    # لێرەدا پشکنین بۆ تەختەی یارییەکە دەکرێت (تەختەی 8x8)
+    for r in range(8):
+        for c in range(8):
+            if board[r][c] == player:
+                # پشکنینی جوڵەکان بۆ پێشەوە، چەپ، و ڕاست (بەبێ لاری!)
+                directions = [(-1, 0), (0, -1), (0, 1)] if player == 1 else [(1, 0), (0, -1), (0, 1)]
+                
+                for dr, dc in directions:
+                    nr, nc = r + dr, c + dc
+                    # لۆژیکی خواردنی بەردی ڕکابەر (Capture)
+                    if 0 <= nr < 8 and 0 <= nc < 8:
+                        if board[nr][nc] != 0 and board[nr][nc] != player:
+                            nnr, nnc = nr + dr, nc + dc
+                            if 0 <= nnr < 8 and 0 <= nnc < 8 and board[nnr][nnc] == 0:
+                                capture_moves.append(((r, c), (nnr, nnc)))
+                        # جوڵەی ئاسایی ئەگەر خانەکە خاڵی بوو
+                        elif board[nr][nc] == 0:
+                            regular_moves.append(((r, c), (nr, nc)))
+                            
+    # بەپێی یاسای دامەی تورکی، ئەگەر خواردن هەبێت، جوڵەی ئاسایی ڕێگەپێدراو نییە
+    if capture_moves:
+        return capture_moves
+    return regular_moves
+
+def evaluate_board(board):
+    """ نرخاندنی دۆخی تەختەکە (پێدانی خاڵ بەپێی ژمارەی بەردەکان) """
+    score = 0
+    for r in range(8):
+        for c in range(8):
+            if board[r][c] == 1: # بەردی سێرڤەر/زیرەکی دەستکرد
+                score += 10
+            elif board[r][c] == 2: # بەردی یاریزان
+                score -= 10
+    return score
+
+def minimax(board, depth, alpha, beta, maximizing_player):
+    """ ئەلگۆریتمی مینیماتس بە قووڵی ئاستی 5 بۆ دۆزینەوەی باشترین جوڵە """
+    if depth == 0:
+        return evaluate_board(board), None
+        
+    player = 1 if maximizing_player else 2
+    moves = get_all_valid_moves(board, player)
+    
+    if not moves:
+        return evaluate_board(board), None
+        
+    best_move = moves[0]
+    
+    if maximizing_player:
+        max_eval = float('-inf')
+        for move in moves:
+            # دروستکردنی کۆپییەکی کاتی لە تەختەکە بۆ تاقیکردنەوەی جوڵەکە
+            temp_board = copy.deepcopy(board)
+            # جێبەجێکردنی جوڵەکە لەسەر تەختە کاتییەکە
+            start, end = move
+            temp_board[end[0]][end[1]] = temp_board[start[0]][start[1]]
+            temp_board[start[0]][start[1]] = 0
+            
+            evaluation, _ = minimax(temp_board, depth - 1, alpha, beta, False)
+            if evaluation > max_eval:
+                max_eval = evaluation
+                best_move = move
+            alpha = max(alpha, evaluation)
+            if beta <= alpha:
+                break
+        return max_eval, best_move
+    else:
+        min_eval = float('inf')
+        for move in moves:
+            temp_board = copy.deepcopy(board)
+            start, end = move
+            temp_board[end[0]][end[1]] = temp_board[start[0]][start[1]]
+            temp_board[start[0]][start[1]] = 0
+            
+            evaluation, _ = minimax(temp_board, depth - 1, alpha, beta, True)
+            if evaluation < min_eval:
+                min_eval = evaluation
+                best_move = move
+            beta = min(beta, evaluation)
+            if beta <= alpha:
+                break
+        return min_eval, best_move
+
+# --- ڕاوتەکانی سێرڤەر (API Endpoints) ---
+
+@app.route('/')
+def home():
+    return "سێرڤەری بزوێنەری دامەی تورکی بە سەرکەوتوویی کاردەکات! 🚀"
+
+@app.route('/api/move', methods=['POST'])
+def get_move():
+    data = request.get_json()
+    # وەرگرتنی دۆخی ئێستای تەختەی یارییەکە (Matrix 8x8)
+    current_board = data.get('board') 
+    
+    if not current_board:
+        return jsonify({"error": "تەختەی یارییەکە نەنێردراوە"}), 400
+        
+    # حیسابکردنی باشترین جوڵە بە قووڵی ئاستی 5
+    _, best_move = minimax(current_board, 5, float('-inf'), float('inf'), True)
+    
+    if best_move:
+        return jsonify({
+            "status": "success",
+            "from": {"row": best_move[0][0], "col": best_move[0][1]},
+            "to": {"row": best_move[1][0], "col": best_move[1][1]}
+        })
+    else:
+        return jsonify({"status": "no_moves", "message": "هیچ جوڵەیەکی فەرمی نەدۆزرایەوە"})
+
+if __name__ == '__main__':
+    app.run(debug=True)
